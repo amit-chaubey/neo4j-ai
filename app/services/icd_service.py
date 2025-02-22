@@ -4,9 +4,12 @@ from typing import Optional, List
 from neo4j import GraphDatabase
 
 class ICDService:
-    def __init__(self, neo4j_client: Neo4jICD):
-        self.db_client = neo4j_client
-        self.driver = GraphDatabase.driver(neo4j_client.uri, auth=(neo4j_client.user, neo4j_client.password))
+    def __init__(self, uri: str, user: str, password: str):
+        """Initialize the ICDService with Neo4j connection details"""
+        self.uri = uri
+        self.user = user
+        self.password = password
+        self.driver = GraphDatabase.driver(self.uri, auth=(self.user, self.password))
 
     def create_icd_code(self, icd_code: ICDCode) -> None:
         """Create ICD code and its relationships in Neo4j"""
@@ -28,34 +31,64 @@ class ICDService:
         )
 
     def close(self):
-        self.driver.close()
+        """Close the Neo4j driver connection"""
+        if self.driver:
+            self.driver.close()
 
     def search_by_description(self, query: str, limit: int = 10) -> List[dict]:
         """
-        Search ICD codes by matching description
+        Enhanced search for ICD codes with multiple search strategies
         """
         with self.driver.session() as session:
+            # Clean and prepare the search term
+            search_term = query.strip().upper()
+            
             cypher_query = """
             MATCH (code:ICDCode)
-            WHERE code.short_desc CONTAINS $query OR code.long_desc CONTAINS $query
-            RETURN code
+            WHERE 
+                // Code exact or partial match
+                code.code CONTAINS $search_term
+                // Description matches (case insensitive)
+                OR toUpper(code.short_desc) CONTAINS $search_term
+                OR toUpper(code.long_desc) CONTAINS $search_term
+                // Category code match
+                OR code.category_code CONTAINS $search_term
+            RETURN DISTINCT code
+            ORDER BY 
+                // Exact matches first
+                CASE 
+                    WHEN code.code = $search_term THEN 0
+                    WHEN code.category_code = $search_term THEN 1
+                    ELSE 2 
+                END,
+                code.code
             LIMIT $limit
             """
-            result = session.run(cypher_query, query=query.upper(), limit=limit)
+            
+            result = session.run(cypher_query, 
+                               search_term=search_term,
+                               limit=limit)
             return [record["code"] for record in result]
 
     def get_category_codes(self, category_code: str) -> List[dict]:
         """
-        Get all ICD codes within a specific category
+        Get all ICD codes within a specific category with improved matching
         """
         with self.driver.session() as session:
+            # Clean and prepare the category code
+            search_term = category_code.strip().upper()
+            
             cypher_query = """
-            MATCH (cat:Category)<-[:BELONGS_TO]-(code:ICDCode)
-            WHERE code.category_code = $category_code
+            MATCH (code:ICDCode)
+            WHERE 
+                // Match exact category or starts with the category
+                code.category_code = $search_term
+                OR code.code STARTS WITH $search_term
             RETURN code
             ORDER BY code.code
             """
-            result = session.run(cypher_query, category_code=category_code)
+            
+            result = session.run(cypher_query, search_term=search_term)
             return [record["code"] for record in result]
 
     def get_code_details(self, code: str) -> Optional[dict]:
