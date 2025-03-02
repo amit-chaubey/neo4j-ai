@@ -12,12 +12,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+def format_icd_code(code: str) -> str:
+    """Format ICD code with proper dots (e.g., A0109 -> A01.09)"""
+    if len(code) <= 3:
+        return code
+    return f"{code[:3]}.{code[3:]}"
+
 def process_icd_row(row):
     """Process a row from the CSV into structured data"""
     return {
         'category_code': row[0],
         'subcategory': row[1],
-        'full_code': row[2],
+        'full_code': format_icd_code(row[2]),
         'short_description': row[3],
         'long_description': row[4],
         'category_name': row[5]
